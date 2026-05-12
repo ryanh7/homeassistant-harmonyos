@@ -1,0 +1,372 @@
+import common from '@ohos.app.ability.common';
+import { HaConnectionPolicyService } from '../../services/HaConnectionPolicyService';
+import { HarmonySensorService, SensorPreferenceSnapshot } from '../../services/HarmonySensorService';
+import {
+  HarmonyGeofenceStatus,
+  HarmonyGeofenceTransition,
+  HarmonyLocationService,
+  HarmonyLocationSnapshot,
+  HarmonyLocationZone
+} from '../../services/HarmonyLocationService';
+import { HarmonySensorSyncResult } from '../../services/HarmonySensorModels';
+import { LongRunningTaskService } from '../background/LongRunningTaskService';
+import { LocationSensorCoordinator } from '../sensors/LocationSensorCoordinator';
+import { ServerManager } from '../../services/ServerManager';
+import { SensorRuntimeFlags, SensorRuntimePresenter } from '../sensors/SensorRuntimePresenter';
+
+interface LocationRuntimeSnapshot {
+  baseUrl: string;
+  webhookId: string;
+  cloudhookUrl: string;
+  registered: boolean;
+  flags: SensorRuntimeFlags;
+  locationHistoryJson: string;
+  locationSentMode: string;
+  locationGeofenceStatus: string;
+}
+
+export class HaLocationRuntimeService {
+  private static readonly locationService: HarmonyLocationService = new HarmonyLocationService();
+  private static context: common.Context | undefined = undefined;
+  private static latestLocation: HarmonyLocationSnapshot | undefined = undefined;
+  private static locationEnabled = false;
+  private static zones: HarmonyLocationZone[] = [];
+  private static currentZoneName = '';
+  private static running = false;
+  private static zonesRefreshing = false;
+  private static geofenceRefreshing = false;
+  private static syncing = false;
+  private static pendingSyncReason = '';
+
+  static ensureRunning(context: common.Context, reason: string = 'location_runtime_ensure'): void {
+    HaLocationRuntimeService.context = context;
+    const snapshot = HaLocationRuntimeService.snapshot();
+    if (!snapshot.registered || snapshot.locationSentMode === 'never' ||
+      !SensorRuntimePresenter.hasAnyLocationSensorEnabled(snapshot.flags)) {
+      HaLocationRuntimeService.stop();
+      HaLocationRuntimeService.syncSensors(reason);
+      return;
+    }
+
+    const useContinuousLocation = HaLocationRuntimeService.shouldUseContinuousLocation(snapshot);
+    if (snapshot.flags.locationBackgroundEnabled && useContinuousLocation) {
+      LongRunningTaskService.ensureLocationActive(context as common.UIAbilityContext).catch((): void => {});
+    } else {
+      LongRunningTaskService.stopLocation(context as common.UIAbilityContext).catch((): void => {});
+    }
+    HaLocationRuntimeService.locationEnabled = HaLocationRuntimeService.locationService.getLocationEnabled();
+    HaLocationRuntimeService.startEnabledWatch();
+    if (useContinuousLocation) {
+      HaLocationRuntimeService.startLocationWatch();
+    } else {
+      HaLocationRuntimeService.running = false;
+      HaLocationRuntimeService.locationService.stopLocationWatch();
+    }
+    HaLocationRuntimeService.refreshZones(false);
+    HaLocationRuntimeService.refreshCurrentLocation(reason);
+  }
+
+  static refreshOnce(context: common.Context, reason: string = 'location_background_work'): void {
+    HaLocationRuntimeService.context = context;
+    const snapshot = HaLocationRuntimeService.snapshot();
+    if (!snapshot.registered || !snapshot.flags.locationBackgroundEnabled ||
+      snapshot.locationSentMode === 'never' ||
+      !SensorRuntimePresenter.hasAnyLocationSensorEnabled(snapshot.flags)) {
+      return;
+    }
+    HaLocationRuntimeService.locationEnabled = HaLocationRuntimeService.locationService.getLocationEnabled();
+    HaLocationRuntimeService.refreshZones(false);
+    HaLocationRuntimeService.refreshCurrentLocation(reason);
+  }
+
+  static stop(): void {
+    const context = HaLocationRuntimeService.context;
+    if (!HaLocationRuntimeService.running) {
+      if (context) {
+        LongRunningTaskService.stopLocation(context as common.UIAbilityContext).catch((): void => {});
+      }
+      return;
+    }
+    HaLocationRuntimeService.running = false;
+    HaLocationRuntimeService.locationService.stopLocationWatch();
+    HaLocationRuntimeService.locationService.stopLocationEnabledWatch();
+    HaLocationRuntimeService.locationService.stopGeofences().catch((): void => {});
+    if (context) {
+      LongRunningTaskService.stopLocation(context as common.UIAbilityContext).catch((): void => {});
+    }
+    AppStorage.setOrCreate<string>('locationGeofenceStatus', 'stopped');
+  }
+
+  static setLatestLocation(snapshot: HarmonyLocationSnapshot | undefined, zoneName: string): void {
+    HaLocationRuntimeService.latestLocation = snapshot;
+    HaLocationRuntimeService.currentZoneName = zoneName;
+  }
+
+  static setLocationEnabled(enabled: boolean): void {
+    HaLocationRuntimeService.locationEnabled = enabled;
+  }
+
+  static locationRuntimeActive(): boolean {
+    return HaLocationRuntimeService.running;
+  }
+
+  private static shouldUseContinuousLocation(snapshot: LocationRuntimeSnapshot): boolean {
+    return snapshot.locationSentMode === 'exact' && snapshot.flags.accurateLocationEnabled;
+  }
+
+  private static startEnabledWatch(): void {
+    HaLocationRuntimeService.locationService.startLocationEnabledWatch((enabled: boolean): void => {
+      HaLocationRuntimeService.locationEnabled = enabled;
+      HaLocationRuntimeService.syncSensors('location_enabled_changed');
+    });
+  }
+
+  private static startLocationWatch(): void {
+    HaLocationRuntimeService.running = true;
+    HaLocationRuntimeService.locationService.startLocationWatch((snapshot: HarmonyLocationSnapshot): void => {
+      HaLocationRuntimeService.handleLocationSnapshot(snapshot, 'location_changed');
+    });
+  }
+
+  private static refreshCurrentLocation(reason: string): void {
+    HaLocationRuntimeService.locationService.getCurrentLocation()
+      .then((snapshot: HarmonyLocationSnapshot | undefined): void => {
+        if (snapshot) {
+          HaLocationRuntimeService.handleLocationSnapshot(snapshot, reason);
+          return;
+        }
+        HaLocationRuntimeService.recordDiagnostics(reason, 'update_location_skipped_no_location');
+      })
+      .catch((err: Error | string | number | boolean | Object): void => {
+        HaLocationRuntimeService.recordDiagnostics(reason, `location_refresh_error:${HaLocationRuntimeService.stringifyError(err)}`);
+      });
+  }
+
+  private static handleLocationSnapshot(snapshot: HarmonyLocationSnapshot, reason: string): void {
+    HaLocationRuntimeService.latestLocation = snapshot;
+    HaLocationRuntimeService.currentZoneName = LocationSensorCoordinator.currentZoneName(
+      snapshot,
+      HaLocationRuntimeService.zones
+    );
+    HaLocationRuntimeService.appendHistory(snapshot, reason, 'pending');
+    if (HaLocationRuntimeService.zones.length === 0) {
+      HaLocationRuntimeService.refreshZones(true);
+    }
+    HaLocationRuntimeService.syncSensors(reason);
+  }
+
+  private static refreshZones(syncAfterRefresh: boolean): void {
+    const snapshot = HaLocationRuntimeService.snapshot();
+    if (!snapshot.registered || HaLocationRuntimeService.zonesRefreshing) {
+      return;
+    }
+    HaLocationRuntimeService.zonesRefreshing = true;
+    HaLocationRuntimeService.resolveAllowedBaseUrl()
+      .then((baseUrl: string): Promise<HarmonyLocationZone[]> => {
+        if (baseUrl.length === 0) {
+          return Promise.resolve([]);
+        }
+        return HarmonySensorService.fetchZones(baseUrl, snapshot.webhookId, '');
+      })
+      .then((zones: HarmonyLocationZone[]): void => {
+        HaLocationRuntimeService.zones = zones;
+        const location = HaLocationRuntimeService.latestLocation;
+        if (location) {
+          HaLocationRuntimeService.currentZoneName = LocationSensorCoordinator.currentZoneName(location, zones);
+        }
+        HaLocationRuntimeService.refreshGeofences();
+        if (syncAfterRefresh) {
+          HaLocationRuntimeService.syncSensors('zones_refreshed');
+        }
+      })
+      .catch((): void => {})
+      .finally((): void => {
+        HaLocationRuntimeService.zonesRefreshing = false;
+      });
+  }
+
+  private static refreshGeofences(): void {
+    const snapshot = HaLocationRuntimeService.snapshot();
+    if (!SensorRuntimePresenter.hasAnyLocationSensorEnabled(snapshot.flags) ||
+      HaLocationRuntimeService.zones.length === 0 ||
+      HaLocationRuntimeService.geofenceRefreshing) {
+      return;
+    }
+    HaLocationRuntimeService.geofenceRefreshing = true;
+    HaLocationRuntimeService.locationService.refreshGeofences(
+      HaLocationRuntimeService.context as common.Context,
+      HaLocationRuntimeService.zones,
+      (transition: HarmonyGeofenceTransition): void => {
+        HaLocationRuntimeService.handleGeofenceTransition(transition);
+      }
+    ).then((status: HarmonyGeofenceStatus): void => {
+      AppStorage.setOrCreate<string>('locationGeofenceStatus', status.summary);
+    }).catch((err: Error | string | number | boolean | Object): void => {
+      AppStorage.setOrCreate<string>('locationGeofenceStatus', `geofence_error:${HaLocationRuntimeService.stringifyError(err)}`);
+    }).finally((): void => {
+      HaLocationRuntimeService.geofenceRefreshing = false;
+    });
+  }
+
+  static handleGeofenceWant(context: common.Context): void {
+    HaLocationRuntimeService.context = context;
+    HaLocationRuntimeService.ensureRunning(context, 'geofence_want');
+  }
+
+  private static handleGeofenceTransition(transition: HarmonyGeofenceTransition): void {
+    if (transition.event === 'geofence_enter' || transition.event === 'geofence_dwell') {
+      HaLocationRuntimeService.currentZoneName = transition.zone.name;
+    } else if (transition.event === 'geofence_exit' &&
+      HaLocationRuntimeService.currentZoneName === transition.zone.name) {
+      HaLocationRuntimeService.currentZoneName = '';
+    }
+    HaLocationRuntimeService.refreshCurrentLocation(transition.event);
+  }
+
+  private static syncSensors(reason: string): void {
+    AppStorage.setOrCreate<string>('lastUpdateTrigger', reason);
+    const snapshot = HaLocationRuntimeService.snapshot();
+    if (!snapshot.registered) {
+      return;
+    }
+    if (HaLocationRuntimeService.syncing) {
+      HaLocationRuntimeService.pendingSyncReason = reason;
+      return;
+    }
+    HaLocationRuntimeService.syncing = true;
+    const preferences = SensorRuntimePresenter.preferences(snapshot.flags);
+    const activePreferences: SensorPreferenceSnapshot = {
+      batterySOCEnabled: preferences.batterySOCEnabled,
+      chargingStatusEnabled: preferences.chargingStatusEnabled,
+      pluggedTypeEnabled: preferences.pluggedTypeEnabled,
+      bearerTypesEnabled: preferences.bearerTypesEnabled,
+      lastUpdateTriggerEnabled: preferences.lastUpdateTriggerEnabled,
+      locationBackgroundEnabled: preferences.locationBackgroundEnabled && HaLocationRuntimeService.running,
+      zoneBackgroundEnabled: preferences.zoneBackgroundEnabled,
+      accurateLocationEnabled: preferences.accurateLocationEnabled
+    };
+
+    HaLocationRuntimeService.resolveAllowedBaseUrl().then((baseUrl: string) => {
+      if (baseUrl.length === 0) {
+        const result: HarmonySensorSyncResult = {
+          registeredCount: 0,
+          updatedCount: 0,
+          locationUpdated: false,
+          locationSummary: 'blocked_by_connection_policy'
+        };
+        return Promise.resolve(result);
+      }
+      return HarmonySensorService.syncPublicSensors(
+        baseUrl,
+        snapshot.webhookId,
+        '',
+        activePreferences,
+        HaLocationRuntimeService.latestLocation,
+        HaLocationRuntimeService.locationEnabled,
+        HaLocationRuntimeService.currentZoneName,
+        SensorRuntimePresenter.locationSentMode(snapshot.locationSentMode),
+        HaLocationRuntimeService.shouldSendLocationUpdate(reason)
+      );
+    }).then((result): void => {
+      if (LocationSensorCoordinator.shouldRecordDiagnostics(reason, result.locationSummary)) {
+        HaLocationRuntimeService.recordDiagnostics(reason, result.locationSummary);
+      }
+    }).catch((err: Error | string | number | boolean | Object | ArrayBuffer): void => {
+      if (LocationSensorCoordinator.isLocationReason(reason)) {
+        HaLocationRuntimeService.recordDiagnostics(reason, `error:${HaLocationRuntimeService.stringifyError(err)}`);
+      }
+    }).finally((): void => {
+      HaLocationRuntimeService.syncing = false;
+      if (HaLocationRuntimeService.pendingSyncReason.length > 0) {
+        const pendingReason = HaLocationRuntimeService.pendingSyncReason;
+        HaLocationRuntimeService.pendingSyncReason = '';
+        HaLocationRuntimeService.syncSensors(pendingReason);
+      }
+    });
+  }
+
+  private static appendHistory(snapshot: HarmonyLocationSnapshot, trigger: string, result: string): void {
+    AppStorage.setOrCreate<string>('locationHistoryJson', LocationSensorCoordinator.appendHistory(
+      AppStorage.get<string>('locationHistoryJson') ?? '[]',
+      snapshot,
+      trigger,
+      HaLocationRuntimeService.currentZoneName,
+      result
+    ));
+  }
+
+  private static recordDiagnostics(trigger: string, result: string): void {
+    const diagnostics = LocationSensorCoordinator.recordDiagnostics({
+      historyJson: AppStorage.get<string>('locationHistoryJson') ?? '[]',
+      snapshot: HaLocationRuntimeService.latestLocation,
+      zoneName: HaLocationRuntimeService.currentZoneName,
+      trigger,
+      sentMode: SensorRuntimePresenter.locationSentMode(AppStorage.get<string>('locationSentMode') ?? 'exact'),
+      geofenceStatus: AppStorage.get<string>('locationGeofenceStatus') ?? 'not_started',
+      result
+    });
+    AppStorage.setOrCreate<string>('locationDiagnosticsJson', diagnostics.summary);
+    if (diagnostics.historyChanged) {
+      AppStorage.setOrCreate<string>('locationHistoryJson', diagnostics.historyJson);
+    }
+  }
+
+  private static snapshot(): LocationRuntimeSnapshot {
+    const flags: SensorRuntimeFlags = {
+      batterySOCEnabled: AppStorage.get<boolean>('sensorBatterySOCEnabled') ?? true,
+      chargingStatusEnabled: AppStorage.get<boolean>('sensorChargingStatusEnabled') ?? true,
+      pluggedTypeEnabled: AppStorage.get<boolean>('sensorPluggedTypeEnabled') ?? true,
+      bearerTypesEnabled: AppStorage.get<boolean>('sensorBearerTypesEnabled') ?? true,
+      lastUpdateTriggerEnabled: AppStorage.get<boolean>('sensorLastUpdateTriggerEnabled') ?? true,
+      locationBackgroundEnabled: AppStorage.get<boolean>('sensorLocationEnabled') ?? false,
+      zoneBackgroundEnabled: AppStorage.get<boolean>('sensorZoneBackgroundEnabled') ?? false,
+      accurateLocationEnabled: AppStorage.get<boolean>('sensorAccurateLocationEnabled') ?? false
+    };
+    const baseUrl = AppStorage.get<string>('haBaseUrl') ?? '';
+    const webhookId = AppStorage.get<string>('haWebhookId') ?? '';
+    return {
+      baseUrl,
+      webhookId,
+      cloudhookUrl: AppStorage.get<string>('haCloudhookUrl') ?? '',
+      registered: baseUrl.trim().length > 0 && webhookId.trim().length > 0,
+      flags,
+      locationHistoryJson: AppStorage.get<string>('locationHistoryJson') ?? '[]',
+      locationSentMode: AppStorage.get<string>('locationSentMode') ?? 'exact',
+      locationGeofenceStatus: AppStorage.get<string>('locationGeofenceStatus') ?? 'not_started'
+    };
+  }
+
+  private static async resolveAllowedBaseUrl(): Promise<string> {
+    const context = HaLocationRuntimeService.context;
+    if (!context) {
+      return '';
+    }
+    const serverId = ServerManager.getActiveServerIdSync(context);
+    if (serverId.length === 0) {
+      return '';
+    }
+    const policy = await HaConnectionPolicyService.resolveServerBaseUrl(context, serverId);
+    return policy.allowed ? policy.baseUrl : '';
+  }
+
+  private static shouldSendLocationUpdate(reason: string): boolean {
+    if (!HaLocationRuntimeService.locationEnabled) {
+      return false;
+    }
+    if (!HaLocationRuntimeService.latestLocation) {
+      return false;
+    }
+    return LocationSensorCoordinator.shouldSendLocationUpdate(reason);
+  }
+
+  private static stringifyError(err: Error | string | number | boolean | Object | ArrayBuffer): string {
+    if (err instanceof Error) {
+      return err.message ? `${err.name}: ${err.message}` : err.name;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch (_) {
+      return String(err);
+    }
+  }
+}

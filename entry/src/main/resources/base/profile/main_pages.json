@@ -1,0 +1,6 @@
+{
+  "src": [
+    "pages/Index",
+    "features/cards/edit/CardEditPage"
+  ]
+}

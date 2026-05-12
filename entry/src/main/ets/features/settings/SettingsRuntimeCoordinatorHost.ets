@@ -1,0 +1,505 @@
+import { AppRoute } from '../../app/AppRoute';
+import { AppRuntimeOverlayActions, AppRuntimeOverlaySnapshot } from '../../app/AppRuntimeOverlayModels';
+import { SettingsItem } from '../../models/SettingsItem';
+import { DeviceFormFactor, DeviceProfileInfo } from '../../shared/device/DeviceProfile';
+import { Localization } from '../../shared/i18n/Localization';
+import {
+  CompanionSettingsSurfaceHost,
+  ServerSettingsSurfaceHost,
+  SettingsDetailSurfaceHost
+} from './SettingsSurfaceRuntimeHost';
+import { SettingsRuntimeActions, SettingsRuntimeSnapshot } from './SettingsRuntimeCoordinatorModels';
+import {
+  CompanionNotificationHistoryBuilder,
+  CompanionNotificationSettingsBuilder,
+  CompanionSensorFrequencyBuilder,
+  CompanionSensorSettingsBuilder,
+  CompanionServerSettingsBuilder,
+  CompanionSettingsDetailBuilder,
+  SETTINGS_NAV_DETAIL,
+  SETTINGS_NAV_NOTIFICATION,
+  SETTINGS_NAV_NOTIFICATION_HISTORY,
+  SETTINGS_NAV_SENSOR,
+  SETTINGS_NAV_SENSOR_FREQUENCY,
+  SETTINGS_NAV_SERVER,
+  SettingsNavDestinationParam,
+  openSettingsNavigationAction,
+  openSettingsNavigationItem
+} from './SettingsNavigationRoutes';
+import { SettingsServerSystemDialogHost } from './SettingsSystemDialogs';
+
+const DEFAULT_SETTINGS_RUNTIME_SNAPSHOT: SettingsRuntimeSnapshot = {
+  route: AppRoute.COMPANION_SETTINGS,
+  companionSections: [],
+  serverSections: [],
+  serverTitle: '',
+  contentMaxWidth: 720,
+  enableTwoPane: false,
+  selectedKey: '',
+  companionScrollOffset: 0,
+  serverScrollOffset: 0,
+  switchRevision: 0,
+  showChoiceDialog: false,
+  choiceDialogKey: '',
+  screenOrientation: 'system',
+  pageZoomLevel: '100',
+  appLanguage: 'default',
+  appTheme: 'light',
+  secureConnectionChoice: '',
+  websocketMode: 'system',
+  serviceCardUpdateFrequency: 'default',
+  dark: false,
+  showDeleteServerDialog: false,
+  deletingServer: false,
+  showEditDialog: false,
+  editTitle: '',
+  editValue: '',
+  editUnit: '',
+  detailKey: '',
+  detailTitle: '',
+  detailSummary: '',
+  detailBody: '',
+  detailStatus: '',
+  detailAction: '',
+  detailTextValue: '',
+  detailOptionValue: '',
+  wifiSsids: [],
+  ssidInput: '',
+  prioritizeInternal: false,
+  gestureGroups: []
+};
+
+const DEFAULT_SETTINGS_RUNTIME_ACTIONS: SettingsRuntimeActions = {
+  gestureActionValue: () => '',
+  onBackToHaSettings: () => {},
+  onRoute: () => {},
+  onOpen: () => {},
+  onAction: () => {},
+  onCompanionScrollOffsetChange: () => {},
+  onServerScrollOffsetChange: () => {},
+  onSwipeBack: () => {},
+  onSelectCompanionChoice: () => {},
+  onCloseCompanionChoice: () => {},
+  onCancelDelete: () => {},
+  onDeleteServer: () => {},
+  onEditValueChange: () => {},
+  onCancelEdit: () => {},
+  onSaveEdit: () => {},
+  onSetDetailHeader: () => {},
+  onOpenDashboard: () => {},
+  onSsidInputChange: () => {},
+  onAddSsid: () => {},
+  onRemoveSsid: () => {},
+  onPrioritizeChange: () => {},
+  onSelectGestureAction: () => {},
+  onSelectDetailChoice: () => {},
+  onDetailTextChange: () => {},
+  onDetailOptionChange: () => {},
+  onSaveServerDetail: () => {},
+  onHelp: () => {}
+};
+
+class DefaultDeviceProfileInfo implements DeviceProfileInfo {
+  widthVp: number = 0;
+  heightVp: number = 0;
+  formFactor: DeviceFormFactor = DeviceFormFactor.PHONE;
+  contentMaxWidth: number = 0;
+  settingsMaxWidth: number = 0;
+  settingsTwoPane: boolean = false;
+}
+
+const DEFAULT_OVERLAY_SNAPSHOT: AppRuntimeOverlaySnapshot = {
+  route: AppRoute.COMPANION_SETTINGS,
+  baseUrl: '',
+  accessToken: '',
+  refreshToken: '',
+  assistStartListeningSignal: 0,
+  assistStartListeningRequested: false,
+  profile: new DefaultDeviceProfileInfo(),
+  sensorGroups: [],
+  sensorUpdateFrequency: 'normal',
+  contentMaxWidth: 720,
+  switchRevision: 0
+};
+
+const DEFAULT_OVERLAY_ACTIONS: AppRuntimeOverlayActions = {
+  onRoute: () => {},
+  onBackToNativeTarget: () => {},
+  onSwipeBack: () => {},
+  onCloseAssist: () => {},
+  onSensorHelp: () => {},
+  onSensorSearch: () => {},
+  onSensorFilter: () => {},
+  onToggleSensor: () => {},
+  onSelectSensorFrequency: () => {}
+};
+
+const PATH_STACK_RESTORE_DELAY_MS: number = 50;
+
+@Component
+export struct SettingsRuntimeCoordinatorHost {
+  @Prop snapshot: SettingsRuntimeSnapshot = DEFAULT_SETTINGS_RUNTIME_SNAPSHOT;
+  @Prop overlaySnapshot: AppRuntimeOverlaySnapshot = DEFAULT_OVERLAY_SNAPSHOT;
+  @Prop @Watch('onRuntimeChanged') route: number = AppRoute.COMPANION_SETTINGS;
+  @Prop @Watch('onRuntimeChanged') detailKey: string = '';
+  @Prop @Watch('onRuntimeChanged') switchRevision: number = 0;
+  actions: SettingsRuntimeActions = DEFAULT_SETTINGS_RUNTIME_ACTIONS;
+  overlayActions: AppRuntimeOverlayActions = DEFAULT_OVERLAY_ACTIONS;
+  @Provide('settingsRuntimeSnapshot') providedSnapshot: SettingsRuntimeSnapshot = DEFAULT_SETTINGS_RUNTIME_SNAPSHOT;
+  @Provide('settingsRuntimeActions') providedActions: SettingsRuntimeActions = DEFAULT_SETTINGS_RUNTIME_ACTIONS;
+  @Provide('settingsOverlaySnapshot') providedOverlaySnapshot: AppRuntimeOverlaySnapshot = DEFAULT_OVERLAY_SNAPSHOT;
+  @Provide('settingsOverlayActions') providedOverlayActions: AppRuntimeOverlayActions = DEFAULT_OVERLAY_ACTIONS;
+  @Provide('settingsPathStack') pathStack: NavPathStack = new NavPathStack();
+  private syncedRoute: number = AppRoute.COMPANION_SETTINGS;
+  private syncedDetailKey: string = '';
+
+  aboutToAppear(): void {
+    this.refreshProvidedRuntime();
+    this.schedulePathStackRestore(false);
+  }
+
+  aboutToRender(): void {
+    this.refreshProvidedRuntime();
+  }
+
+  private onRuntimeChanged(): void {
+    this.refreshProvidedRuntime();
+    this.schedulePathStackRestore(true);
+  }
+
+  private refreshProvidedRuntime(): void {
+    this.providedSnapshot = this.snapshot;
+    this.providedActions = this.actions;
+    this.providedOverlaySnapshot = this.overlaySnapshot;
+    this.providedOverlayActions = this.overlayActions;
+  }
+
+  private popToRoot(animated: boolean): void {
+    while (this.pathStack.size() > 0) {
+      this.pathStack.pop(animated);
+    }
+  }
+
+  private isRestorableSettingsRoute(): boolean {
+    return this.snapshot.route === AppRoute.COMPANION_SETTINGS ||
+      this.snapshot.route === AppRoute.SERVER_SETTINGS ||
+      this.snapshot.route === AppRoute.SETTINGS_DETAIL;
+  }
+
+  private restorePathStackForSnapshot(animated: boolean): void {
+    if (!this.isRestorableSettingsRoute()) {
+      this.syncedRoute = this.snapshot.route;
+      this.syncedDetailKey = this.snapshot.detailKey;
+      return;
+    }
+    this.popToRoot(false);
+    if (this.snapshot.route === AppRoute.SERVER_SETTINGS) {
+      const serverParam: SettingsNavDestinationParam = { key: SETTINGS_NAV_SERVER };
+      this.pathStack.pushPath({ name: SETTINGS_NAV_SERVER, param: serverParam }, animated);
+    } else if (this.snapshot.route === AppRoute.SETTINGS_DETAIL && this.snapshot.detailKey.length > 0) {
+      if (this.isServerDetail()) {
+        const serverParam: SettingsNavDestinationParam = { key: SETTINGS_NAV_SERVER };
+        this.pathStack.pushPath({ name: SETTINGS_NAV_SERVER, param: serverParam }, false);
+      }
+      const param: SettingsNavDestinationParam = { key: this.snapshot.detailKey };
+      this.pathStack.pushPath({ name: SETTINGS_NAV_DETAIL, param: param }, animated);
+    }
+    this.syncedRoute = this.snapshot.route;
+    this.syncedDetailKey = this.snapshot.detailKey;
+  }
+
+  private schedulePathStackRestore(animated: boolean): void {
+    setTimeout((): void => {
+      if (!this.isRestorableSettingsRoute()) {
+        this.syncedRoute = this.snapshot.route;
+        this.syncedDetailKey = this.snapshot.detailKey;
+        return;
+      }
+      if (this.snapshot.route === this.syncedRoute && this.snapshot.detailKey === this.syncedDetailKey) {
+        return;
+      }
+      this.restorePathStackForSnapshot(animated);
+    }, PATH_STACK_RESTORE_DELAY_MS);
+  }
+
+  private openSettingsItem(item: SettingsItem): void {
+    openSettingsNavigationItem(item, this.pathStack, this.actions);
+  }
+
+  private openSettingsAction(actionId: string): void {
+    openSettingsNavigationAction(actionId, this.pathStack, this.actions);
+  }
+
+  private routeTo(route: number): void {
+    this.actions.onRoute(route);
+    if (route === AppRoute.COMPANION_SETTINGS) {
+      this.popToRoot(true);
+    } else if (route === AppRoute.SERVER_SETTINGS) {
+      this.popToRoot(false);
+      const param: SettingsNavDestinationParam = { key: SETTINGS_NAV_SERVER };
+      this.pathStack.pushPath({ name: SETTINGS_NAV_SERVER, param: param }, true);
+    }
+  }
+
+  private setDetailHeader(key: string, title: string): void {
+    this.actions.onSetDetailHeader(key, title);
+    const param: SettingsNavDestinationParam = { key: key };
+    this.pathStack.pushPath({ name: SETTINGS_NAV_DETAIL, param: param }, true);
+  }
+
+  private splitNavWidth(): number {
+    const width = Math.floor(this.snapshot.contentMaxWidth * 0.4);
+    if (width < 320) {
+      return 320;
+    }
+    if (width > 420) {
+      return 420;
+    }
+    return width;
+  }
+
+  private splitContentWidth(): number {
+    const width = this.snapshot.contentMaxWidth - this.splitNavWidth();
+    return width > 360 ? width : 360;
+  }
+
+  private isServerDetail(): boolean {
+    return this.snapshot.detailKey.startsWith('server_');
+  }
+
+  @Builder
+  private renderCompanionListPane(): void {
+    CompanionSettingsSurfaceHost({
+      sections: this.snapshot.companionSections,
+      contentMaxWidth: this.splitNavWidth(),
+      enableTwoPane: false,
+      selectedKey: this.snapshot.selectedKey,
+      scrollOffset: this.snapshot.companionScrollOffset,
+      switchRevision: this.snapshot.switchRevision,
+      showChoiceDialog: this.snapshot.showChoiceDialog && this.snapshot.choiceDialogKey !== 'server_connection_security',
+      choiceDialogKey: this.snapshot.choiceDialogKey,
+      screenOrientation: this.snapshot.screenOrientation,
+      pageZoomLevel: this.snapshot.pageZoomLevel,
+      appLanguage: this.snapshot.appLanguage,
+      appTheme: this.snapshot.appTheme,
+      secureConnectionChoice: this.snapshot.secureConnectionChoice,
+      websocketMode: this.snapshot.websocketMode,
+      serviceCardUpdateFrequency: this.snapshot.serviceCardUpdateFrequency,
+      dark: this.snapshot.dark,
+      onBack: this.actions.onBackToHaSettings,
+      onOpen: (item: SettingsItem): void => this.openSettingsItem(item),
+      onAction: (actionId: string): void => this.openSettingsAction(actionId),
+      onScrollOffsetChange: this.actions.onCompanionScrollOffsetChange,
+      onSwipeBack: this.actions.onSwipeBack,
+      onSelectChoice: this.actions.onSelectCompanionChoice,
+      onCloseChoice: this.actions.onCloseCompanionChoice
+    })
+  }
+
+  @Builder
+  private renderCompanionRoot(): void {
+    CompanionSettingsSurfaceHost({
+      sections: this.snapshot.companionSections,
+      contentMaxWidth: this.snapshot.contentMaxWidth,
+      enableTwoPane: this.snapshot.enableTwoPane,
+      selectedKey: this.snapshot.selectedKey,
+      scrollOffset: this.snapshot.companionScrollOffset,
+      switchRevision: this.snapshot.switchRevision,
+      showChoiceDialog: this.snapshot.showChoiceDialog && this.snapshot.choiceDialogKey !== 'server_connection_security',
+      choiceDialogKey: this.snapshot.choiceDialogKey,
+      screenOrientation: this.snapshot.screenOrientation,
+      pageZoomLevel: this.snapshot.pageZoomLevel,
+      appLanguage: this.snapshot.appLanguage,
+      appTheme: this.snapshot.appTheme,
+      secureConnectionChoice: this.snapshot.secureConnectionChoice,
+      websocketMode: this.snapshot.websocketMode,
+      serviceCardUpdateFrequency: this.snapshot.serviceCardUpdateFrequency,
+      dark: this.snapshot.dark,
+      onBack: this.actions.onBackToHaSettings,
+      onOpen: (item: SettingsItem): void => this.openSettingsItem(item),
+      onAction: (actionId: string): void => this.openSettingsAction(actionId),
+      onScrollOffsetChange: this.actions.onCompanionScrollOffsetChange,
+      onSwipeBack: this.actions.onSwipeBack,
+      onSelectChoice: this.actions.onSelectCompanionChoice,
+      onCloseChoice: this.actions.onCloseCompanionChoice
+    })
+  }
+
+  @Builder
+  private renderServerListPane(): void {
+    ServerSettingsSurfaceHost({
+      title: this.snapshot.serverTitle,
+      sections: this.snapshot.serverSections,
+      contentMaxWidth: this.splitNavWidth(),
+      enableTwoPane: false,
+      selectedKey: this.snapshot.selectedKey,
+      scrollOffset: this.snapshot.serverScrollOffset,
+      switchRevision: this.snapshot.switchRevision,
+      showChoiceDialog: this.snapshot.showChoiceDialog && this.snapshot.choiceDialogKey === 'server_connection_security',
+      choiceDialogKey: this.snapshot.choiceDialogKey,
+      secureConnectionChoice: this.snapshot.secureConnectionChoice,
+      dark: this.snapshot.dark,
+      onBack: (): void => this.routeTo(AppRoute.COMPANION_SETTINGS),
+      onOpen: (item: SettingsItem): void => this.openSettingsItem(item),
+      onAction: (actionId: string): void => this.openSettingsAction(actionId),
+      onScrollOffsetChange: this.actions.onServerScrollOffsetChange,
+      onSwipeBack: this.actions.onSwipeBack,
+      onSelectChoice: this.actions.onSelectCompanionChoice,
+      onCloseChoice: this.actions.onCloseCompanionChoice
+    })
+  }
+
+  @Builder
+  private renderServerPage(contentMaxWidth: number): void {
+    ServerSettingsSurfaceHost({
+      title: this.snapshot.serverTitle,
+      sections: this.snapshot.serverSections,
+      contentMaxWidth: contentMaxWidth,
+      enableTwoPane: false,
+      selectedKey: this.snapshot.selectedKey,
+      scrollOffset: this.snapshot.serverScrollOffset,
+      switchRevision: this.snapshot.switchRevision,
+      showChoiceDialog: this.snapshot.showChoiceDialog && this.snapshot.choiceDialogKey === 'server_connection_security',
+      choiceDialogKey: this.snapshot.choiceDialogKey,
+      secureConnectionChoice: this.snapshot.secureConnectionChoice,
+      dark: this.snapshot.dark,
+      onBack: (): void => this.routeTo(AppRoute.COMPANION_SETTINGS),
+      onOpen: (item: SettingsItem): void => this.openSettingsItem(item),
+      onAction: (actionId: string): void => this.openSettingsAction(actionId),
+      onScrollOffsetChange: this.actions.onServerScrollOffsetChange,
+      onSwipeBack: this.actions.onSwipeBack,
+      onSelectChoice: this.actions.onSelectCompanionChoice,
+      onCloseChoice: this.actions.onCloseCompanionChoice
+    })
+  }
+
+  @Builder
+  private renderDetailPane(contentMaxWidth: number): void {
+    SettingsDetailSurfaceHost({
+      detailKey: this.snapshot.detailKey,
+      title: this.snapshot.detailTitle,
+      summary: this.snapshot.detailSummary,
+      body: this.snapshot.detailBody,
+      status: this.snapshot.detailStatus,
+      action: this.snapshot.detailAction,
+      textValue: this.snapshot.detailTextValue,
+      optionValue: this.snapshot.detailOptionValue,
+      contentMaxWidth: contentMaxWidth,
+      wifiSsids: this.snapshot.wifiSsids,
+      ssidInput: this.snapshot.ssidInput,
+      prioritizeInternal: this.snapshot.prioritizeInternal,
+      gestureGroups: this.snapshot.gestureGroups,
+      screenOrientation: this.snapshot.screenOrientation,
+      pageZoomLevel: this.snapshot.pageZoomLevel,
+      appLanguage: this.snapshot.appLanguage,
+      appTheme: this.snapshot.appTheme,
+      serviceCardUpdateFrequency: this.snapshot.serviceCardUpdateFrequency,
+      gestureActionValue: this.actions.gestureActionValue,
+      onRoute: (route: number): void => this.routeTo(route),
+      onSetDetailHeader: (key: string, title: string): void => this.setDetailHeader(key, title),
+      onOpenDashboard: this.actions.onOpenDashboard,
+      onSsidInputChange: this.actions.onSsidInputChange,
+      onAddSsid: this.actions.onAddSsid,
+      onRemoveSsid: this.actions.onRemoveSsid,
+      onPrioritizeChange: this.actions.onPrioritizeChange,
+      onSelectGestureAction: this.actions.onSelectGestureAction,
+      onSelectChoice: this.actions.onSelectDetailChoice,
+      onTextChange: this.actions.onDetailTextChange,
+      onOptionChange: (value: string): void => {
+        this.actions.onDetailOptionChange(value);
+        if (this.snapshot.detailKey === 'server_websocket') {
+          this.routeTo(AppRoute.SERVER_SETTINGS);
+        }
+      },
+      onSaveServerDetail: this.actions.onSaveServerDetail,
+      onHelp: this.actions.onHelp,
+      onSwipeBack: this.actions.onSwipeBack
+    })
+  }
+
+  @Builder
+  private renderSplitRuntime(): void {
+    Stack() {
+      Row() {
+        if (this.snapshot.route === AppRoute.SETTINGS_DETAIL && this.isServerDetail()) {
+          this.renderServerListPane()
+        } else {
+          this.renderCompanionListPane()
+        }
+
+        if (this.snapshot.route === AppRoute.SERVER_SETTINGS) {
+          this.renderServerPage(this.splitContentWidth())
+        } else {
+          this.renderDetailPane(this.splitContentWidth())
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .constraintSize({ maxWidth: this.snapshot.contentMaxWidth })
+
+      this.renderSettingsDialogs()
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private renderSettingsDestination(name: string): void {
+    if (name === SETTINGS_NAV_SERVER) {
+      CompanionServerSettingsBuilder()
+    } else if (name === SETTINGS_NAV_DETAIL) {
+      CompanionSettingsDetailBuilder()
+    } else if (name === SETTINGS_NAV_SENSOR) {
+      CompanionSensorSettingsBuilder()
+    } else if (name === SETTINGS_NAV_SENSOR_FREQUENCY) {
+      CompanionSensorFrequencyBuilder()
+    } else if (name === SETTINGS_NAV_NOTIFICATION) {
+      CompanionNotificationSettingsBuilder()
+    } else if (name === SETTINGS_NAV_NOTIFICATION_HISTORY) {
+      CompanionNotificationHistoryBuilder()
+    }
+  }
+
+  @Builder
+  private renderStackRuntime(): void {
+    Stack() {
+      Navigation(this.pathStack) {
+        this.renderCompanionRoot()
+      }
+      .mode(NavigationMode.Stack)
+      .hideTitleBar(true)
+      .hideToolBar(true)
+      .navDestination(this.renderSettingsDestination)
+
+      this.renderSettingsDialogs()
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private renderSettingsDialogs(): void {
+    SettingsServerSystemDialogHost({
+      showDeleteDialog: this.snapshot.showDeleteServerDialog,
+      deletingServer: this.snapshot.deletingServer,
+      showEditDialog: this.snapshot.showEditDialog,
+      editTitle: this.snapshot.editTitle,
+      editValue: this.snapshot.editValue,
+      editUnit: this.snapshot.editUnit,
+      onCancelDelete: this.actions.onCancelDelete,
+      onDeleteServer: this.actions.onDeleteServer,
+      onEditValueChange: this.actions.onEditValueChange,
+      onCancelEdit: this.actions.onCancelEdit,
+      onSaveEdit: this.actions.onSaveEdit
+    })
+  }
+
+  build() {
+    if (this.snapshot.enableTwoPane &&
+      (this.snapshot.route === AppRoute.SETTINGS_DETAIL || this.snapshot.route === AppRoute.SERVER_SETTINGS)) {
+      this.renderSplitRuntime()
+    } else {
+      this.renderStackRuntime()
+    }
+  }
+}

@@ -1,0 +1,73 @@
+import { SettingsItem, SettingsSection } from '../../models/SettingsItem';
+import { GestureSettingGroup } from './CompanionSettingsData';
+
+export interface SettingsRuntimeSnapshot {
+  route: number;
+  companionSections: SettingsSection[];
+  serverSections: SettingsSection[];
+  serverTitle: string;
+  contentMaxWidth: number;
+  enableTwoPane: boolean;
+  selectedKey: string;
+  companionScrollOffset: number;
+  serverScrollOffset: number;
+  switchRevision: number;
+  showChoiceDialog: boolean;
+  choiceDialogKey: string;
+  screenOrientation: string;
+  pageZoomLevel: string;
+  appLanguage: string;
+  appTheme: string;
+  secureConnectionChoice: string;
+  websocketMode: string;
+  serviceCardUpdateFrequency: string;
+  dark: boolean;
+  showDeleteServerDialog: boolean;
+  deletingServer: boolean;
+  showEditDialog: boolean;
+  editTitle: string;
+  editValue: string;
+  editUnit: string;
+  detailKey: string;
+  detailTitle: string;
+  detailSummary: string;
+  detailBody: string;
+  detailStatus: string;
+  detailAction: string;
+  detailTextValue: string;
+  detailOptionValue: string;
+  wifiSsids: string[];
+  ssidInput: string;
+  prioritizeInternal: boolean;
+  gestureGroups: GestureSettingGroup[];
+}
+
+export interface SettingsRuntimeActions {
+  gestureActionValue: (key: string) => string;
+  onBackToHaSettings: () => void;
+  onRoute: (route: number) => void;
+  onOpen: (item: SettingsItem) => void;
+  onAction: (actionId: string) => void;
+  onCompanionScrollOffsetChange: (offset: number) => void;
+  onServerScrollOffsetChange: (offset: number) => void;
+  onSwipeBack: () => void;
+  onSelectCompanionChoice: (value: string) => void;
+  onCloseCompanionChoice: () => void;
+  onCancelDelete: () => void;
+  onDeleteServer: () => void;
+  onEditValueChange: (value: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onSetDetailHeader: (key: string, title: string) => void;
+  onOpenDashboard: () => void;
+  onSsidInputChange: (value: string) => void;
+  onAddSsid: () => void;
+  onRemoveSsid: (value: string) => void;
+  onPrioritizeChange: (value: boolean) => void;
+  onSelectGestureAction: (key: string, value: string) => void;
+  onSelectDetailChoice: (key: string, value: string) => void;
+  onDetailTextChange: (value: string) => void;
+  onDetailOptionChange: (value: string) => void;
+  onSaveServerDetail: () => void;
+  onHelp: () => void;
+}

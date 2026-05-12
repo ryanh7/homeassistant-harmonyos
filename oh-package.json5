@@ -1,0 +1,6 @@
+{
+  "modelVersion": "6.0.2",
+  "description": "Home Assistant companion app for HarmonyOS NEXT.",
+  "dependencies": {
+  }
+}

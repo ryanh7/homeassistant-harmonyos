@@ -1,0 +1,69 @@
+{
+  "routerMap": [
+    {
+      "name": "CompanionServerSettings",
+      "pageSourceFile": "src/main/ets/features/settings/SettingsNavigationRoutes.ets",
+      "buildFunction": "CompanionServerSettingsBuilder"
+    },
+    {
+      "name": "CompanionSettingsDetail",
+      "pageSourceFile": "src/main/ets/features/settings/SettingsNavigationRoutes.ets",
+      "buildFunction": "CompanionSettingsDetailBuilder"
+    },
+    {
+      "name": "CompanionSensorSettings",
+      "pageSourceFile": "src/main/ets/features/settings/SettingsNavigationRoutes.ets",
+      "buildFunction": "CompanionSensorSettingsBuilder"
+    },
+    {
+      "name": "CompanionSensorFrequency",
+      "pageSourceFile": "src/main/ets/features/settings/SettingsNavigationRoutes.ets",
+      "buildFunction": "CompanionSensorFrequencyBuilder"
+    },
+    {
+      "name": "CompanionNotificationSettings",
+      "pageSourceFile": "src/main/ets/features/settings/SettingsNavigationRoutes.ets",
+      "buildFunction": "CompanionNotificationSettingsBuilder"
+    },
+    {
+      "name": "CompanionNotificationHistory",
+      "pageSourceFile": "src/main/ets/features/settings/SettingsNavigationRoutes.ets",
+      "buildFunction": "CompanionNotificationHistoryBuilder"
+    },
+    {
+      "name": "CompanionOnboardingDiscovery",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingDiscoveryBuilder"
+    },
+    {
+      "name": "CompanionOnboardingManualServer",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingManualServerBuilder"
+    },
+    {
+      "name": "CompanionOnboardingNameDevice",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingNameDeviceBuilder"
+    },
+    {
+      "name": "CompanionOnboardingLocalFirst",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingLocalFirstBuilder"
+    },
+    {
+      "name": "CompanionOnboardingLocationSharing",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingLocationSharingBuilder"
+    },
+    {
+      "name": "CompanionOnboardingSecureConnection",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingSecureConnectionBuilder"
+    },
+    {
+      "name": "CompanionOnboardingHomeNetwork",
+      "pageSourceFile": "src/main/ets/features/onboarding/OnboardingNavigationRoutes.ets",
+      "buildFunction": "CompanionOnboardingHomeNetworkBuilder"
+    }
+  ]
+}

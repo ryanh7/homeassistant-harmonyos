@@ -1,0 +1,56 @@
+﻿{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Home Assistant"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Home Assistant"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Home Assistant"
+    },
+    {
+      "name": "microphone_permission_reason",
+      "value": "用于在 Home Assistant 助手中录制语音指令。"
+    },
+    {
+      "name": "location_permission_reason",
+      "value": "用于共享此设备的位置，并让 Home Assistant 更新位置相关实体。"
+    },
+    {
+      "name": "location_background_permission_reason",
+      "value": "允许 Home Assistant 在后台更新设备位置，用于到家、离家和区域自动化。"
+    },
+    {
+      "name": "background_refresh_permission_reason",
+      "value": "允许 Home Assistant 在启用持久连接后保持后台数据同步，用于刷新桌面卡片。"
+    },
+    {
+      "name": "light_card_display_name",
+      "value": "灯光控制"
+    },
+    {
+      "name": "light_card_description",
+      "value": "控制 Home Assistant 灯光实体。"
+    },
+    {
+      "name": "media_card_display_name",
+      "value": "媒体控制"
+    },
+    {
+      "name": "media_card_description",
+      "value": "控制 Home Assistant 媒体播放器实体。"
+    },
+    {
+      "name": "scene_card_display_name",
+      "value": "场景控制"
+    },
+    {
+      "name": "scene_card_description",
+      "value": "触发 Home Assistant 场景实体。"
+    }
+  ]
+}
